@@ -6,21 +6,6 @@ Input parameters include:\n\
   -m <mesh_x>       : number of mesh points in x-direction\n\
   -n <mesh_n>       : number of mesh points in y-direction\n\n";
 
-/*T
-   Concepts: KSP^basic parallel example;
-   Concepts: KSP^Laplacian, 2d
-   Concepts: Laplacian, 2d
-   Processors: n
-T*/
-
-/*
-  Include "petscksp.h" so that we can use KSP solvers.  Note that this file
-  automatically includes:
-     petscsys.h       - base PETSc routines   petscvec.h - vectors
-     petscmat.h - matrices
-     petscis.h     - index sets            petscksp.h - Krylov subspace methods
-     petscviewer.h - viewers               petscpc.h  - preconditioners
-*/
 #include <petscksp.h>
 
 #include <mpi.h>
@@ -31,12 +16,11 @@ T*/
 #define __FUNCT__ "main"
 int main(int argc,char **args)
 {
-  Vec            x,b,u,w;  /* approx solution, RHS, exact solution */
+  Vec            x,b,w;  /* approx solution, RHS, exact solution */
   Mat            A;        /* linear system matrix */
   KSP            ksp;     /* linear solver context */
-  PetscInt       i,Istart,Iend,m = 8,n = 7,its,N;
+  PetscInt       i,Istart,Iend,its,N;
   PetscErrorCode ierr;
-  PetscBool      flg = PETSC_FALSE;
 #if defined(PETSC_USE_LOG)
   PetscLogStage stage;
 #endif
@@ -59,8 +43,9 @@ int main(int argc,char **args)
      performance. See the matrix chapter of the users manual for details.
   */
 
-int myid;
+int myid,size;
 MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+MPI_Comm_size(MPI_COMM_WORLD, &size);
 int aa = 1;
 while(aa==0)
 {
@@ -72,10 +57,15 @@ fscanf(fp,"%d\n",&N);
 int myi,myj;
 double val;
   ierr = MatCreate(PETSC_COMM_WORLD,&A);CHKERRQ(ierr);
-ierr = MatSetFromOptions(A);CHKERRQ(ierr); 
-	ierr = MatSetSizes(A,PETSC_DECIDE,PETSC_DECIDE,N,N);CHKERRQ(ierr);
+ierr = MatSetFromOptions(A);CHKERRQ(ierr);
+if(myid==0){
+	ierr = MatSetSizes(A,N/size+N%size,N/size+N%size,N,N);CHKERRQ(ierr);
+}
+else{
+	ierr = MatSetSizes(A,N/size,N/size,N,N);CHKERRQ(ierr);
+}
 
-
+//	ierr = MatSetSizes(A,PETSC_DECIDE,PETSC_DECIDE,N,N);CHKERRQ(ierr);
 
 
 
@@ -108,7 +98,6 @@ ierr = MatSeqAIJSetPreallocation(A,8,NULL); CHKERRQ(ierr);
   ierr = PetscLogStageRegister("Assembly", &stage);CHKERRQ(ierr);
   ierr = PetscLogStagePush(stage);CHKERRQ(ierr);
 
-fscanf(fp,"%d",&N);
 while(fscanf(fp,"(%d,%d) %le\n",&myi,&myj,&val)!=EOF){
 	if(myi<Iend && myi>= Istart){
 		ierr = MatSetValues(A,1,&myi,1,&myj,&val,ADD_VALUES);CHKERRQ(ierr);
@@ -119,47 +108,25 @@ fclose(fp);
  
  
  
-// for (Ii=Istart; Ii<Iend; Ii++) {
-//    v = -1.0; i = Ii/n; j = Ii - i*n;
-//    if (i>0)   {J = Ii - n; ierr = MatSetValues(A,1,&Ii,1,&J,&v,ADD_VALUES);CHKERRQ(ierr);}
-//    if (i<m-1) {J = Ii + n; ierr = MatSetValues(A,1,&Ii,1,&J,&v,ADD_VALUES);CHKERRQ(ierr);}
-//    if (j>0)   {J = Ii - 1; ierr = MatSetValues(A,1,&Ii,1,&J,&v,ADD_VALUES);CHKERRQ(ierr);}
-//    if (j<n-1) {J = Ii + 1; ierr = MatSetValues(A,1,&Ii,1,&J,&v,ADD_VALUES);CHKERRQ(ierr);}
-//    v = 4.0; ierr = MatSetValues(A,1,&Ii,1,&Ii,&v,ADD_VALUES);CHKERRQ(ierr);
-//  }
-
-  /*
-     Assemble matrix, using the 2-step process:
-       MatAssemblyBegin(), MatAssemblyEnd()
-     Computations can be done while messages are in transition
-     by placing code between these two statements.
-  */
   ierr = MatAssemblyBegin(A,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
   ierr = MatAssemblyEnd(A,MAT_FINAL_ASSEMBLY);CHKERRQ(ierr);
   ierr = PetscLogStagePop();CHKERRQ(ierr);
 
-  /* A is symmetric. Set symmetric flag to enable ICC/Cholesky preconditioner */
-  ierr = MatSetOption(A,MAT_SYMMETRIC,PETSC_TRUE);CHKERRQ(ierr);
 
-  /*
-     Create parallel vectors.
-      - We form 1 vector from scratch and then duplicate as needed.
-      - When using VecCreate(), VecSetSizes and VecSetFromOptions()
-        in this example, we specify only the
-        vector's global dimension; the parallel partitioning is determined
-        at runtime.
-      - When solving a linear system, the vectors and matrices MUST
-        be partitioned accordingly.  PETSc automatically generates
-        appropriately partitioned matrices and vectors when MatCreate()
-        and VecCreate() are used with the same communicator.
-      - The user can alternatively specify the local vector and matrix
-        dimensions when more sophisticated partitioning is needed
-        (replacing the PETSC_DECIDE argument in the VecSetSizes() statement
-        below).
-  */
   ierr = VecCreate(PETSC_COMM_WORLD,&x);CHKERRQ(ierr);
-  ierr = VecSetSizes(x,PETSC_DECIDE,N);CHKERRQ(ierr);
-  ierr = VecSetFromOptions(x);CHKERRQ(ierr);
+  
+  if(myid==0){
+  ierr = VecSetSizes(x,N/size+N%size,N);CHKERRQ(ierr);
+  }
+  else{
+  ierr = VecSetSizes(x,N/size,N);CHKERRQ(ierr);
+  }
+
+//  ierr = VecSetSizes(x,PETSC_DECIDE,N);CHKERRQ(ierr);
+
+
+
+ierr = VecSetFromOptions(x);CHKERRQ(ierr);
   ierr = VecDuplicate(x,&b);CHKERRQ(ierr);
 	
 ierr = VecGetOwnershipRange(b,&Istart,&Iend);CHKERRQ(ierr);;
@@ -180,16 +147,6 @@ fclose(fp);
 
 
 
-  /*
-     View the exact solution vector if desired
-  */
-  flg  = PETSC_FALSE;
-  ierr = PetscOptionsGetBool(NULL,NULL,"-view_exact_sol",&flg,NULL);CHKERRQ(ierr);
-  if (flg) {ierr = VecView(u,PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);}
-
-  /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-                Create the linear solver and set various options
-     - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
   /*
      Create linear solver context
@@ -212,7 +169,7 @@ fclose(fp);
        KSPSetFromOptions().  All of these defaults can be
        overridden at runtime, as indicated below.
   */
-  ierr = KSPSetTolerances(ksp,1.e-6,1.e-20,PETSC_DEFAULT,
+  ierr = KSPSetTolerances(ksp,1.e-20,1.e-40,PETSC_DEFAULT,
                           PETSC_DEFAULT);CHKERRQ(ierr);
 
   /*
@@ -263,17 +220,26 @@ printf("scatteredi\n");
 PetscScalar *array;
 ierr = VecGetArray(w,&array);CHKERRQ(ierr);;
 
-FILE* outfp;
-outfp = fopen("out.dat","w");
+FILE* outfp,*fp1;
+double myx,myy;
+
+
+
 if(myid==0){
+outfp = fopen("out.dat","w");
+fp1 = fopen("./data/point.dat","r");
+fscanf(fp1,"%d\n",&i);
 for(i=0;i<N;++i){
-	ierr = PetscFPrintf(PETSC_COMM_WORLD,outfp,"%lf\n",array[i]);CHKERRQ(ierr);
+	fscanf(fp1,"%le %le\n",&myx,&myy);
+	if(i==0)
+		printf("%le %le %le\n",myx,myy,array[i]);
+	ierr = PetscFPrintf(PETSC_COMM_WORLD,outfp,"%le %le %le\n",myx,myy,array[i]);CHKERRQ(ierr);
 }
 
+fclose(fp1);
+fclose(outfp);
 }
 ierr = VecRestoreArray(w,&array);CHKERRQ(ierr);
-fclose(outfp);
-
   /*
      Free work space.  All PETSc objects should be destroyed when they
      are no longer needed.
@@ -283,7 +249,6 @@ ierr = VecDestroy(&x);CHKERRQ(ierr);
   ierr = VecDestroy(&b);CHKERRQ(ierr);  ierr = MatDestroy(&A);CHKERRQ(ierr);
  
 ierr = VecDestroy(&w);CHKERRQ(ierr);
-
   /*
      Always call PetscFinalize() before exiting a program.  This routine
        - finalizes the PETSc libraries as well as MPI
